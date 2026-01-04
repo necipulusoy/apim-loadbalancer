@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>🤖 NecipGPT</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="layout">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="sidebar-header">🤖 NecipGPT</div>
+
+      <button class="menu-btn" id="new-chat">➕ New Chat</button>
+
+      <div id="chat-list" class="chat-list"></div>
+
+      <button class="menu-btn" id="stats">📊 Stats</button>
+      <button class="menu-btn danger" id="clear-all">🧹 Clear All Chats</button>
+
+      <div class="sidebar-footer">
+        <small>Powered by Azure OpenAI</small>
+      </div>
+    </div>
+
+    <!-- MAIN CHAT WINDOW -->
+    <div class="main">
+      <div id="chat-box" class="chat-box">
+        <div id="empty-state" class="empty-state">Ask me anything…</div>
+      </div>
+
+      <div class="input-container">
+        <textarea id="prompt" rows="2" placeholder="Type your message..."></textarea>
+        <button id="send">Send</button>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+  let chats = [];
+  let activeChatId = null;
+  let currentView = "chat";
+
+  const chatBox = document.getElementById("chat-box");
+  const chatList = document.getElementById("chat-list");
+  const input = document.getElementById("prompt");
+  const sendBtn = document.getElementById("send");
+  const newChatBtn = document.getElementById("new-chat");
+  const clearAllBtn = document.getElementById("clear-all");
+  const statsBtn = document.getElementById("stats");
+
+  /* ---------- EMPTY STATE ---------- */
+  function showEmptyState() {
+    chatBox.innerHTML = '<div id="empty-state" class="empty-state">Ask me anything…</div>';
+  }
+
+  function removeEmptyState() {
+    const empty = document.getElementById("empty-state");
+    if (empty) empty.remove();
+  }
+
+  /* ---------- RENDER SIDEBAR CHAT LIST ---------- */
+  function renderChatList() {
+    chatList.innerHTML = "";
+    chats.forEach(chat => {
+      const btn = document.createElement("button");
+      btn.className = "chat-item";
+      btn.textContent = chat.title || "New Chat";
+      btn.onclick = () => loadChat(chat.id);
+      chatList.appendChild(btn);
+    });
+  }
+
+  function formatMeta(meta) {
+    if (!meta) return null;
+    const usage = meta.usage || {};
+    const latency = meta.latency_ms != null ? `${meta.latency_ms} ms` : "n/a";
+    const backend = meta.backend_id ? ` | Backend: ${meta.backend_id}` : "";
+    const text = `Latency: ${latency} | Tokens: ${usage.completion_tokens || 0}${backend}`;
+    return { text, cacheHit: meta.cache_hit };
+  }
+
+  /* ---------- LOAD CHAT SAFELY ---------- */
+  async function loadChat(id) {
+    activeChatId = id;
+    currentView = "chat";
+    chatBox.innerHTML = "";
+    try {
+      const res = await fetch(`/chats/${id}`);
+      const messages = await res.json();
+      if (!Array.isArray(messages) || messages.length === 0) {
+        showEmptyState();
+        return;
+      }
+      messages.forEach(msg => addMessage(msg.role, msg.content, formatMeta(msg.meta)));
+    } catch (err) {
+      showEmptyState();
+    }
+  }
+
+  /* ---------- CREATE NEW CHAT ---------- */
+  function createNewChat() {
+    activeChatId = "chat-" + Date.now();
+    currentView = "chat";
+    showEmptyState();
+  }
+
+  /* ---------- UI: ADD MESSAGE ---------- */
+  function addMessage(role, content, metaInfo = null) {
+    removeEmptyState();
+
+    const msg = document.createElement("div");
+    msg.classList.add("message", role);
+    msg.innerHTML = `<div class="bubble">${content}</div>`;
+    chatBox.appendChild(msg);
+
+    if (metaInfo && metaInfo.text) {
+      const metaDiv = document.createElement("div");
+      metaDiv.className = "meta";
+      metaDiv.textContent = metaInfo.text;
+      if (metaInfo.cacheHit !== undefined && metaInfo.cacheHit !== null) {
+        const badge = document.createElement("span");
+        badge.className = `badge ${metaInfo.cacheHit ? "hit" : "miss"}`;
+        badge.textContent = metaInfo.cacheHit ? "CACHE HIT" : "CACHE MISS";
+        metaDiv.appendChild(badge);
+      }
+      msg.querySelector(".bubble").appendChild(metaDiv);
+    }
+
+    chatBox.scrollTop = chatBox.scrollHeight;
+  }
+
+  /* ---------- TYPING EFFECT ---------- */
+  async function typeMessage(role, text, metaInfo = null) {
+    removeEmptyState();
+
+    const msg = document.createElement("div");
+    msg.classList.add("message", role);
+    const bubble = document.createElement("div");
+    bubble.classList.add("bubble");
+    msg.appendChild(bubble);
+    chatBox.appendChild(msg);
+
+    for (let i = 0; i < text.length; i++) {
+      bubble.textContent += text[i];
+      chatBox.scrollTop = chatBox.scrollHeight;
+      await new Promise(r => setTimeout(r, 7));
+    }
+
+    if (metaInfo && metaInfo.text) {
+      const metaDiv = document.createElement("div");
+      metaDiv.className = "meta";
+      metaDiv.textContent = metaInfo.text;
+      if (metaInfo.cacheHit !== undefined && metaInfo.cacheHit !== null) {
+        const badge = document.createElement("span");
+        badge.className = `badge ${metaInfo.cacheHit ? "hit" : "miss"}`;
+        badge.textContent = metaInfo.cacheHit ? "CACHE HIT" : "CACHE MISS";
+        metaDiv.appendChild(badge);
+      }
+      bubble.appendChild(metaDiv);
+    }
+  }
+
+  /* ---------- SEND BUTTON ---------- */
+  sendBtn.addEventListener("click", async () => {
+    const prompt = input.value.trim();
+    if (!prompt) return;
+
+    currentView = "chat";
+    addMessage("user", prompt);
+
+    input.value = "";
+
+    addMessage("assistant", "Thinking...");
+
+    try {
+      const start = performance.now();
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: activeChatId,
+          message: prompt
+        }),
+      });
+      console.log("Fetch response status:", res.status);
+      const durationMs = Math.round(performance.now() - start);
+
+      const data = await res.json();
+      console.log("Response data:", data);
+      if (!res.ok) {
+        throw new Error(data.error || data.detail || "Backend error");
+      }
+      const botText = data.text || "";
+      if (!botText) {
+        throw new Error("Empty response from backend");
+      }
+      const usage = data.usage || {};
+      const latency = data.latency_ms != null ? data.latency_ms : durationMs;
+      const backendId = data.backend_id ? ` | Backend: ${data.backend_id}` : "";
+      const text = `Latency: ${latency} ms | Tokens: ${usage.completion_tokens || 0}${backendId}`;
+      const meta = { text, cacheHit: data.cache_hit };
+      console.log("Meta text:", meta.text);
+
+      chatBox.lastChild.remove(); // remove "Thinking..."
+
+      await typeMessage("assistant", botText, meta);
+
+      await refreshChats(activeChatId, false);
+    } catch (err) {
+      addMessage("assistant", "⚠️ Error: " + err.message);
+    }
+  });
+
+  // Send on Enter (Shift+Enter for newline)
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendBtn.click();
+    }
+  });
+
+  /* ---------- SIDEBAR BUTTONS ---------- */
+  newChatBtn.addEventListener("click", createNewChat);
+
+  clearAllBtn.addEventListener("click", () => {
+    if (confirm("Delete all chats?")) {
+      fetch("/chats", { method: "DELETE" }).finally(() => {
+        chats = [];
+        renderChatList();
+        showEmptyState();
+      });
+    }
+  });
+
+  async function renderStats() {
+    currentView = "stats";
+    chatBox.innerHTML = "";
+    try {
+      const res = await fetch("/stats");
+      const stats = await res.json();
+      if (!Array.isArray(stats) || stats.length === 0) {
+        chatBox.innerHTML = '<div class="empty-state">No stats yet.</div>';
+        const clearBtn = document.createElement("button");
+        clearBtn.className = "menu-btn stats-clear";
+        clearBtn.textContent = "Clear Stats";
+        clearBtn.onclick = async () => {
+          await fetch("/stats", { method: "DELETE" });
+          renderStats();
+        };
+        chatBox.appendChild(clearBtn);
+        return;
+      }
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "menu-btn stats-clear";
+      clearBtn.textContent = "Clear Stats";
+      clearBtn.onclick = async () => {
+        await fetch("/stats", { method: "DELETE" });
+        renderStats();
+      };
+      chatBox.appendChild(clearBtn);
+      const table = document.createElement("table");
+      table.className = "stats-table";
+      table.innerHTML = `
+        <thead>
+          <tr>
+            <th>Backend</th>
+            <th>Responses</th>
+            <th>Total Tokens</th>
+            <th>Avg Latency (ms)</th>
+            <th>Cache Hit %</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      `;
+      const tbody = table.querySelector("tbody");
+      stats.forEach(s => {
+        const avg = s.responses ? Math.round(s.latency_ms_total / s.responses) : 0;
+        const hits = s.cache_hits || 0;
+        const misses = s.cache_misses || 0;
+        const hitRate = hits + misses > 0 ? Math.round((hits / (hits + misses)) * 100) : 0;
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${s.backend_id}</td>
+          <td>${s.responses}</td>
+          <td>${s.total_tokens}</td>
+          <td>${avg}</td>
+          <td>${hitRate}%</td>
+        `;
+        tbody.appendChild(row);
+      });
+      chatBox.appendChild(table);
+
+      // Simple bar chart
+      const maxResponses = Math.max(...stats.map(s => s.responses || 0), 1);
+      const maxTokens = Math.max(...stats.map(s => s.total_tokens || 0), 1);
+      const chart = document.createElement("div");
+      chart.className = "stats-chart";
+      stats.forEach(s => {
+        const row = document.createElement("div");
+        row.className = "stats-row";
+        const respWidth = Math.round(((s.responses || 0) / maxResponses) * 100);
+        const tokenWidth = Math.round(((s.total_tokens || 0) / maxTokens) * 100);
+        row.innerHTML = `
+          <div class="stats-label">${s.backend_id}</div>
+          <div class="stats-bars">
+            <div class="bar responses" style="width:${respWidth}%">Responses ${s.responses || 0}</div>
+            <div class="bar tokens" style="width:${tokenWidth}%">Tokens ${s.total_tokens || 0}</div>
+          </div>
+        `;
+        chart.appendChild(row);
+      });
+      chatBox.appendChild(chart);
+    } catch (err) {
+      chatBox.innerHTML = '<div class="empty-state">Failed to load stats.</div>';
+    }
+  }
+
+  statsBtn.addEventListener("click", renderStats);
+
+  /* ---------- INITIALIZE ---------- */
+  async function refreshChats(focusId = null, loadFocus = true) {
+    try {
+      const res = await fetch("/chats");
+      chats = await res.json();
+      renderChatList();
+      if (currentView === "chat" && focusId && loadFocus) {
+        loadChat(focusId);
+      } else if (currentView === "chat" && chats.length > 0) {
+        loadChat(chats[0].id);
+      }
+    } catch (err) {
+      chats = [];
+      renderChatList();
+    }
+  }
+
+  refreshChats().then(() => {
+    if (chats.length === 0) {
+      createNewChat();
+    }
+  });
+</script>
+
+</body>
+</html>

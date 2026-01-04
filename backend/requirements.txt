@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+httpx
+azure-identity
+openai
+redis
