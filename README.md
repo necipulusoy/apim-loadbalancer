@@ -1,6 +1,6 @@
 # APIM Load Balancer
 
-Bu klasör, APIM üzerinden **load balancing + failover** senaryosunu test etmek için hazırlanmıştır.
+Bu çalışma, APIM üzerinden **load balancing + failover** senaryosunu test etmek için hazırlanmıştır.
 Uygulama doğrudan Azure OpenAI’a gitmez; APIM üzerinden gider.
 
 ---
